@@ -1,0 +1,195 @@
+name: PR Automation Workflow
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-quality:
+    name: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        id: eslint
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Run Prettier check
+        id: prettier
+        run: npx prettier --check .
+        continue-on-error: true
+
+      - name: Post code quality report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eslintStatus = `${{ steps.eslint.outcome }}`;
+            const prettierStatus = `${{ steps.prettier.outcome }}`;
+            const report = `
+            ## Code Quality Report
+            ### ESLint: ${eslintStatus === 'success' ? '✅ Passed' : '❌ Failed'}
+            ### Prettier: ${prettierStatus === 'success' ? '✅ Passed' : '❌ Failed'}
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+  testing-suite:
+    name: testing-suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage
+        id: test
+        run: npm test -- --coverage
+        continue-on-error: true
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+      - name: Post test coverage report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testStatus = `${{ steps.test.outcome }}`;
+            const report = `
+            ## Test Coverage Report
+            ### Test Suite: ${testStatus === 'success' ? '✅ Passed' : '❌ Failed'}
+            Coverage report artifact uploaded as 'coverage-report'.
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run dependency vulnerability check
+        id: audit
+        run: npm audit --audit-level moderate
+        continue-on-error: true
+
+      - name: Scan for secrets
+        id: secrets
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true
+
+      - name: Post security scan report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auditStatus = `${{ steps.audit.outcome }}`;
+            const secretsStatus = `${{ steps.secrets.outcome }}`;
+            const report = `
+            ## Security Scan Report
+            ### Vulnerabilities (Dependencies): ${auditStatus === 'success' ? '✅ No moderate or higher vulnerabilities' : '❌ Vulnerabilities found'}
+            ### Secrets Scan: ${secretsStatus === 'success' ? '✅ No secrets found' : '❌ Secrets detected'}
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+  build-validation:
+    name: build-validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        id: build
+        run: npm run build
+        continue-on-error: true
+
+      - name: Validate endpoints (example)
+        id: endpoints
+        run: |
+          # Example endpoint validation - adjust based on your application
+          if [ -d dist ]; then
+            echo "✅ Build directory exists"
+          else
+            echo "❌ Build directory missing"
+            exit 1
+          fi
+        continue-on-error: true
+
+      - name: Upload deployment preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-preview
+          path: dist/
+
+      - name: Post build validation report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const buildStatus = `${{ steps.build.outcome }}`;
+            const endpointsStatus = `${{ steps.endpoints.outcome }}`;
+            const report = `
+            ## Build Validation
+            ### Build: ${buildStatus === 'success' ? '✅ Successful' : '❌ Failed'}
+            ### Endpoints Validation: ${endpointsStatus === 'success' ? '✅ Passed' : '❌ Failed'}
+            Deployment preview artifact uploaded as 'deployment-preview'.
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
